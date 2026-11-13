@@ -14,6 +14,7 @@ has no npm dependencies and does not require Pi to be installed when using OpenC
 ```sh
 git clone https://github.com/samwei12/pi-tick.git
 cd pi-tick
+git remote add upstream https://github.com/gscode1/pi-tick.git
 node scripts/install.mjs
 # Updates: git pull --ff-only, then node scripts/install.mjs while jobs are idle.
 ```
