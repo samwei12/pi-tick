@@ -1,3 +1,4 @@
+import { agentAdapter } from "../agents/index.mjs";
 // commands/add.mjs — `pi-tick add <id> ...` and the tick intake it shares
 // with the extension's `tick_create` LLM tool (extensions/tick/index.ts).
 //
@@ -52,6 +53,10 @@ export async function createTick(params, { stdout = process.stdout, stderr = pro
   const kind = String(params.scheduleKind);
   const enabled = params.enabled === true;
   const model = params.model ? String(params.model) : null;
+  const agent = agentAdapter(params.agent).id;
+  if (agent !== "pi" && prompt.trimStart().startsWith("/")) fail("slash commands require agent pi", 2);
+  const onComplete = params.onComplete || null;
+  if (onComplete && typeof onComplete !== "string") fail("onComplete must be an executable path", 2);
 
   // Runtime controls arrive as plain numbers here (CLI flags are parsed by
   // the caller, the tool's params are already numbers) — reuse
@@ -89,6 +94,8 @@ export async function createTick(params, { stdout = process.stdout, stderr = pro
     enabled: false,
     ...(kind === KIND_ONCE ? { onceConsumedAt: null } : {}),
     model,
+    agent,
+    onComplete,
     piPath: null,
     nodePath: null,
     createdAt: now,
@@ -178,6 +185,8 @@ export async function cmdAdd(argv, { stdout = process.stdout, stderr = process.s
     scheduleOpts: flags,
     enabled,
     model,
+    agent: flagOptionalString(flags, "agent"),
+    onComplete: flagOptionalString(flags, "on-complete"),
     // Raw flag values (string, `true` for a bare flag, or undefined) —
     // createTick is the single place that runs them through
     // flagOptionalU32's validation, for both this CLI path and the tool.

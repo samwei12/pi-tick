@@ -1,3 +1,4 @@
+import { agentAdapter } from "../agents/index.mjs";
 // commands/enable.mjs — `pi-tick enable <id>`. `cmdEnableInternal` is also
 // called by commands/add.mjs for `pi-tick add --enabled`.
 
@@ -6,7 +7,7 @@ import { ensureDataDirs, loadCatalog, findJob, withCatalogLock, saveCatalog } fr
 import { stableCliPath, logsDir } from "../paths.mjs";
 import { parseFlags } from "../argv.mjs";
 import { fail } from "../errors.mjs";
-import { resolveNodePath, resolvePiPath, augmentedPath } from "../bin-resolve.mjs";
+import { resolveNodePath, augmentedPath } from "../bin-resolve.mjs";
 import { activeBackend } from "../backend-info.mjs";
 import { KIND_ONCE, validateOnceAt } from "../schedule.mjs";
 
@@ -25,16 +26,17 @@ export async function cmdEnableInternal(id, { skipCatalogExistsCheck = false, st
   // Validate that the stable script path exists; if not, the session_start
   // sync hasn't run yet.
   if (!existsSync(stableCliPath())) {
-    fail(`stable CLI not found at ${stableCliPath()}; open a pi session once to sync it (session_start copies it)`, 1);
+    fail(`stable CLI not found at ${stableCliPath()}; run node scripts/install.mjs in the pi-tick checkout`, 1);
   }
 
   const nodePath = resolveNodePath();
   if (!nodePath) {
     fail(`could not resolve 'node' on PATH; install Node.js or set up ~/.local/bin`, 1);
   }
-  const piPath = resolvePiPath();
+  const adapter = agentAdapter(preJob.agent);
+  const piPath = adapter.resolve(preJob);
   if (!piPath) {
-    fail(`could not resolve 'pi' on PATH; install pi via 'npm i -g @earendil-works/pi-coding-agent' or symlink it into ~/.local/bin`, 1);
+    fail(`could not resolve '${adapter.id}' on PATH`, 1);
   }
 
   mkdirSync(logsDir(), { recursive: true, mode: 0o700 });
@@ -74,7 +76,8 @@ export async function cmdEnableInternal(id, { skipCatalogExistsCheck = false, st
       } catch { /* swallow */ }
     } else {
       job.enabled = true;
-      job.piPath = piPath;
+      if (adapter.id === "pi") job.piPath = piPath;
+      else job.agentPath = piPath;
       job.nodePath = nodePath;
       job.updatedAt = new Date().toISOString();
       saveCatalog(catalog);

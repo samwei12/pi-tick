@@ -1,3 +1,5 @@
+import { agentAdapter } from "./agents/index.mjs";
+import { runCallback } from "./callback.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, statSync, readdirSync, unlinkSync, renameSync, createWriteStream } from "node:fs";
@@ -140,47 +142,6 @@ export function extractTaskflowFailure(text) {
   return error || (failedAt ? `taskflow failed at ${failedAt}` : "taskflow failed");
 }
 
-function taskflowPrompt(prompt) {
-  const text = String(prompt).trim();
-  let name = null;
-  let rest = "";
-  const shortcut = text.match(/^\/tf:([^\s]+)(?:\s+(.*))?$/);
-  if (shortcut) {
-    name = shortcut[1];
-    rest = shortcut[2] || "";
-  } else {
-    const run = text.match(/^\/tf\s+run\s+([^\s]+)(?:\s+(.*))?$/);
-    if (run) {
-      name = run[1];
-      rest = run[2] || "";
-    }
-  }
-  if (!name) return null;
-  const args = {};
-  for (const part of rest.split(/\s+/).filter(Boolean)) {
-    const i = part.indexOf("=");
-    if (i > 0) args[part.slice(0, i)] = part.slice(i + 1);
-  }
-  return `Call the taskflow tool exactly once with ${JSON.stringify({ action: "run", name, args })}. Do not call any other tool. Do not inspect files. Return only the taskflow result.`;
-}
-
-// ─── Phase: spawn plan ──────────────────────────────────────────────────
-// Pure: which pi invocation mode a job runs under and the argv that follow
-// from it. Slash-command jobs run via pi's RPC mode; everything else
-// (including saved taskflows — /tf itself expands to a model turn, and
-// unconstrained scheduled runs often pick the wrong first tool) runs as a
-// one-shot prompt.
-function buildRunArgs(job, { defaultModel }) {
-  const tfPrompt = taskflowPrompt(job.prompt);
-  const isSlashCommand = !tfPrompt && job.prompt.trimStart().startsWith("/");
-  const args = isSlashCommand ? ["--mode", "rpc", "--no-session"] : ["--mode", "json", "-p", "--no-session"];
-  const effectiveModel = job.model ?? defaultModel ?? null;
-  if (effectiveModel) args.push("--model", effectiveModel);
-  if (tfPrompt) args.push("--tools", "taskflow");
-  if (!isSlashCommand) args.push(tfPrompt || job.prompt);
-  return { isSlashCommand, args, effectiveModel };
-}
-
 // ─── Phase: run controls (wall/idle/output-cap timers + kill escalation) ──
 // Encapsulates the kill-reason bookkeeping and the SIGTERM→SIGKILL
 // escalation so the rest of runJob only ever calls killChild(reason) /
@@ -289,81 +250,6 @@ function decodeWithCap(chunk, decoder, budget, maxOutputBytes) {
   return { text, capped };
 }
 
-// ─── Phase: RPC handshake lifecycle ────────────────────────────────────
-// Keeps a slash-command job's (--mode rpc) stdin open until the assistant
-// turn finishes — closing it right after the prompt only proves pi
-// accepted the command, yielding an instant exit 0 with a tiny transcript.
-// `agent_end` closes stdin directly; a `response`/prompt event with no
-// subsequent `agent_start` within 250ms (a command that never dispatched
-// to the agent, e.g. a built-in slash command) falls back to closing it
-// too. Also tracks usage/final-text from message_end events, which the
-// run record needs.
-function createRpcLifecycle({ isSlashCommand, child }) {
-  let agentStarted = false;
-  let closeTimer = null;
-  let lastUsage = null;
-  let finalText = null;
-  let finalError = null;
-
-  const closeStdin = () => {
-    if (isSlashCommand && child.stdin && !child.stdin.destroyed) {
-      try { child.stdin.end(); } catch { /* pipe already gone */ }
-    }
-  };
-
-  const handleEvent = (evt) => {
-    if (!evt || typeof evt.type !== "string") return;
-    if (evt.type === "agent_start") {
-      agentStarted = true;
-      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
-    }
-    if (evt.type === "agent_end") closeStdin();
-    if (evt.type === "response" && evt.command === "prompt" && isSlashCommand) {
-      closeTimer = setTimeout(() => {
-        if (!agentStarted) closeStdin();
-      }, 250);
-    }
-    if (evt.type === "message_end" && evt.message) {
-      if (evt.message.usage) lastUsage = evt.message.usage;
-      if (evt.message.role === "assistant") {
-        // The LAST assistant message decides: an earlier error that a retry
-        // recovered from must not fail the run (issue #13).
-        finalError = evt.message.stopReason === "error"
-          ? String(evt.message.errorMessage || "model error")
-          : null;
-      }
-      if (evt.message.role === "assistant" && Array.isArray(evt.message.content)) {
-        const texts = evt.message.content
-          .filter((p) => p && p.type === "text" && typeof p.text === "string")
-          .map((p) => p.text);
-        if (texts.length > 0) {
-          const joined = texts.join("\n").trim();
-          if (joined.length > 0) finalText = joined;
-        }
-      }
-    }
-  };
-
-  return {
-    writePrompt: (prompt) => {
-      if (isSlashCommand && child.stdin && !child.stdin.destroyed) {
-        try {
-          child.stdin.write(`${JSON.stringify({ type: "prompt", message: prompt })}\n`);
-        } catch { /* pipe already gone; the 'error' listener handles async EPIPE */ }
-      }
-    },
-    handleLine: (line) => {
-      try { handleEvent(JSON.parse(line)); } catch { /* not JSON; ignore */ }
-    },
-    clear: () => {
-      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
-    },
-    getLastUsage: () => lastUsage,
-    getFinalText: () => finalText,
-    getFinalError: () => finalError,
-  };
-}
-
 // ─── Phase: run record ──────────────────────────────────────────────────
 // Pure: classify how the run ended (spawn error, kill, signal, transcript
 // write failure, taskflow failure, clean exit, or a failed exit) and shape
@@ -372,7 +258,7 @@ function buildRunRecord({
   runId, jobId, triggerKind, startedAt, finishedAt,
   code, signal, spawnErr, killReason, transcriptWriteError,
   stderrBuf, finalText, finalError, effectiveModel, lastUsage,
-  transcriptPath, transcriptBytes,
+  transcriptPath, transcriptBytes, agent = "pi",
 }) {
   let exitCode = typeof code === "number" ? code : 1;
   let error = null;
@@ -397,7 +283,7 @@ function buildRunRecord({
   } else if (signal) {
     reason = "signal";
     error = `killed by ${signal}`;
-  } else if (exitCode === 0 && finalError) {
+  } else if (finalError) {
     // pi exits 0 even when the model call itself failed (issue #13).
     exitCode = 1;
     reason = "model_error";
@@ -419,7 +305,7 @@ function buildRunRecord({
   }
 
   const record = {
-    runId, jobId, triggerKind, startedAt, finishedAt, exitCode, reason, error, model: effectiveModel,
+    runId, jobId, triggerKind, startedAt, finishedAt, exitCode, reason, error, agent, model: effectiveModel,
   };
   if (lastUsage) {
     const inp = lastUsage.input || lastUsage.inputTokens || 0;
@@ -460,6 +346,8 @@ async function updateLastRunAndPrune(jobId, record, { transcriptPath, finishedAt
         };
         if (transcriptPath) j.lastRun.transcriptPath = transcriptPath;
         if (record.tokens) j.lastRun.tokens = record.tokens;
+        j.lastRun.agent = record.agent;
+        j.lastRun.model = record.model;
         if (record.finalTextPreview) j.lastRun.finalTextPreview = record.finalTextPreview;
         j.updatedAt = finishedAt;
 
@@ -492,7 +380,9 @@ export async function runJob(job, trigger, options) {
   const { piPath, transcriptsDir, logsDir, spawnFn = spawn, stderr = process.stderr, envPath, defaultModel } = options;
   const drainMs = Number.isFinite(options.drainMs) ? options.drainMs : STREAM_DRAIN_MS;
 
-  const { isSlashCommand, args, effectiveModel } = buildRunArgs(job, { defaultModel });
+  const adapter = agentAdapter(job.agent);
+  const { isSlashCommand, args, effectiveModel } = adapter.plan(job, { defaultModel });
+  const executable = options.agentPath || piPath;
 
   const startedAt = new Date().toISOString();
   const runId = randomBytes(4).toString("hex");
@@ -516,13 +406,13 @@ export async function runJob(job, trigger, options) {
 
   const triggerKind = trigger || "external";
 
-  const env = { ...process.env, CONTEXT_MODE_BRIDGE_DEPTH: process.env.CONTEXT_MODE_BRIDGE_DEPTH || "1" };
+  const env = { ...process.env, PWD: job.cwd, CONTEXT_MODE_BRIDGE_DEPTH: process.env.CONTEXT_MODE_BRIDGE_DEPTH || "1" };
   if (envPath) env.PATH = envPath;
 
   let child;
   try {
     // Execute Pi directly so the OS handles shell wrappers, shebangs, and binaries.
-    child = spawnFn(piPath, args, {
+    child = spawnFn(executable, args, {
       cwd: job.cwd,
       stdio: [isSlashCommand ? "pipe" : "ignore", "pipe", "pipe"],
       env,
@@ -537,7 +427,7 @@ export async function runJob(job, trigger, options) {
     const existingTranscriptPath = transcriptPath && existsSync(transcriptPath) ? transcriptPath : null;
     const record = buildRunRecord({
       runId, jobId: job.id, triggerKind, startedAt, finishedAt,
-      spawnErr: err, stderrBuf: "", finalText: "", effectiveModel,
+      spawnErr: err, stderrBuf: "", finalText: "", effectiveModel, agent: adapter.id,
       transcriptPath: existingTranscriptPath, transcriptBytes: existingTranscriptPath ? 0 : null,
     });
     try { appendJsonl(runsFile(), record); } catch { /* best effort */ }
@@ -545,6 +435,7 @@ export async function runJob(job, trigger, options) {
     await updateLastRunAndPrune(job.id, record, {
       transcriptPath: existingTranscriptPath, finishedAt, transcriptsDir, logsDir, stderr,
     });
+    await runCallback(job, record, { stderr });
     return { ...record, transcriptPath: existingTranscriptPath, transcriptBytes: existingTranscriptPath ? 0 : null };
   }
 
@@ -573,7 +464,7 @@ export async function runJob(job, trigger, options) {
       stderrBuf = (stderrBuf + `stdin error: ${err && err.message}\n`).slice(-16384);
     });
   }
-  const rpc = createRpcLifecycle({ isSlashCommand, child });
+  const rpc = adapter.lifecycle({ isSlashCommand, child });
   // Keep RPC stdin open until the assistant turn finishes (see
   // createRpcLifecycle above for why).
   rpc.writePrompt(job.prompt);
@@ -687,7 +578,7 @@ export async function runJob(job, trigger, options) {
         runId, jobId: job.id, triggerKind, startedAt, finishedAt,
         code, signal, spawnErr, killReason, transcriptWriteError,
         stderrBuf, finalText: rpc.getFinalText(), finalError: rpc.getFinalError(), effectiveModel, lastUsage: rpc.getLastUsage(),
-        transcriptPath, transcriptBytes,
+        transcriptPath, transcriptBytes, agent: adapter.id,
       });
 
       try { appendJsonl(runsFile(), record); } catch { /* best effort */ }
@@ -696,6 +587,7 @@ export async function runJob(job, trigger, options) {
 
       await updateLastRunAndPrune(job.id, record, { transcriptPath, finishedAt, transcriptsDir, logsDir, stderr });
 
+      await runCallback(job, record, { stderr });
       liveRuns.delete(handle);
       syncSignalHandlers();
       markFinished();

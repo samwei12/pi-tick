@@ -1,3 +1,4 @@
+import { agentAdapter } from "../agents/index.mjs";
 // commands/run.mjs — `pi-tick run <id> [--manual]`. Fired by launchd/cron as
 // a subprocess (`node pi-tick.mjs run <id>`) or in-process by the extension.
 
@@ -7,7 +8,7 @@ import { ensureDataDirs, loadCatalog, findJob, loadConfig, claimOnceJob, appendJ
 import { transcriptsDir, logsDir, runsFile } from "../paths.mjs";
 import { parseFlags } from "../argv.mjs";
 import { fail } from "../errors.mjs";
-import { resolvePiPath, resolveNodePath, augmentedPath } from "../bin-resolve.mjs";
+import { resolveNodePath, augmentedPath } from "../bin-resolve.mjs";
 import { runJob } from "../runner.mjs";
 import { getActiveRun } from "../run-registry.mjs";
 import { activeBackend } from "../backend-info.mjs";
@@ -95,12 +96,10 @@ export async function cmdRun(argv, { stdout = process.stdout, stderr = process.s
     return 6;
   }
 
-  let piBinary = job.piPath;
+  const adapter = agentAdapter(job.agent);
+  const piBinary = adapter.resolve(job);
   if (!piBinary || !existsSync(piBinary)) {
-    piBinary = resolvePiPath();
-  }
-  if (!piBinary || !existsSync(piBinary)) {
-    stderr.write(`pi-tick: could not resolve 'pi' binary; set job.piPath or install pi\n`);
+    stderr.write(`pi-tick: could not resolve '${adapter.id}' binary\n`);
     return 7;
   }
 
@@ -145,6 +144,7 @@ export async function cmdRun(argv, { stdout = process.stdout, stderr = process.s
   const result = await runJob(job, trigger, {
     nodePath: nodeBinary,
     piPath: piBinary,
+    agentPath: piBinary,
     transcriptsDir: transcriptsDir(),
     logsDir: logsDir(),
     envPath: augmentedPath(),

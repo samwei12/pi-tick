@@ -1,3 +1,56 @@
+# Personal pi-tick fork
+
+Based on upstream pi-tick 0.1.6, retaining upstream Git history and MIT license.
+The changes are intentionally small: Pi/OpenCode adapters, unattended prompt context,
+one completion callback, and installation without starting Pi. Scheduling, timeouts,
+run history and retention remain upstream's. Model routing and fallback belong to
+an external provider such as magpie; pi-tick runs each task once.
+
+## Install and update this fork
+
+Requires Node.js 20+ and the agent CLI you want to run. The standalone scheduler
+has no npm dependencies and does not require Pi to be installed when using OpenCode.
+
+```sh
+git clone https://github.com/samwei12/pi-tick.git
+cd pi-tick
+node scripts/install.mjs
+# Updates: git pull --ff-only, then node scripts/install.mjs while jobs are idle.
+```
+
+Add `~/.local/bin` to PATH. Data remains in `~/.pi/agent/tick` (or
+`PI_TICK_DATA_DIR`); installation preserves jobs and history. `PI_TICK_BIN_DIR`
+can override the directory for the CLI symlink. If you also want Pi's `/tick`
+commands, add this checkout using `pi install /absolute/path/to/pi-tick`.
+
+```sh
+pi-tick add sample --agent pi --model magpie/group/tools \
+  --prompt "Report the current date" --cwd "$PWD" --kind daily --time 09:00
+pi-tick run sample --manual
+pi-tick enable sample
+```
+
+`--agent` is `pi` (default) or `opencode`. Model identifiers are passed unchanged;
+use the identifier exposed by that agent. Slash commands remain Pi-only. Each
+adapter owns its command arguments, executable lookup and event parser under
+`extensions/tick/bin/agents/`; the runner owns process lifetime and storage.
+
+`--on-complete /absolute/path/to/executable` optionally invokes one executable
+in the task's working directory, with the saved run record as JSON on stdin.
+It runs after the task is recorded, for success and failure. It has a 30-second
+limit, never retries the task, and writes output/status to
+`<transcriptPath>.callback.log`. A zero agent exit means execution completed,
+not independent verification of the business result; inspect the task's own receipt.
+
+To merge upstream updates: `git fetch upstream`, merge the selected upstream
+revision, run the upstream suite and `npm run test:agents`, then reinstall while
+idle. No model retry policy or notification provider is embedded in this fork.
+
+The original upstream documentation follows; its npm install instructions refer
+to the upstream distribution, not this fork.
+
+---
+
 # Pi Tick
 
 > Persistent scheduled agent tasks for [Pi](https://pi.dev), backed by

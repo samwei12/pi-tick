@@ -14,7 +14,7 @@ Usage:
                    [--minutes N] [--seconds N] [--at ISO-8601] \\
                    [--offset-minutes N] [--offset-seconds N] \\
                    [--time HH:MM] [--days mon,wed,fri] \\
-                   [--model <id>] [--enabled] \\
+                   [--agent pi|opencode --on-complete <executable> --model <id>] [--enabled] \\
                    [--timeout-ms N] [--idle-timeout-ms N] \\
                    [--max-output-bytes N] [--kill-grace-ms N]
   pi-tick list [--json]

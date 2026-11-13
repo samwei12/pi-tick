@@ -62,14 +62,13 @@ function makeTreeStub(mode: "term-victim" | "exit0") {
   const piPidFile = join(stubDir, `pi-${n}.pid`);
   const doneFile = join(stubDir, `done-${n}.flag`);
   const script = join(stubDir, `pi-${n}.mjs`);
-  const descSrc = `process.on("SIGTERM",()=>{});setInterval(()=>{},1000);setTimeout(()=>process.exit(0),30000);`;
+  const descSrc = `process.on("SIGTERM",()=>{});require("node:fs").writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000);setTimeout(()=>process.exit(0),30000);`;
   writeFileSync(script, `#!${process.execPath}
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, existsSync } from "node:fs";
 const d = spawn(process.execPath, ["-e", ${JSON.stringify(descSrc)}], { stdio: ["ignore", "inherit", "inherit"] });
-writeFileSync(${JSON.stringify(pidFile)}, String(d.pid));
 writeFileSync(${JSON.stringify(piPidFile)}, String(process.pid));
-${mode === "exit0" ? `writeFileSync(${JSON.stringify(doneFile)}, "1"); d.unref(); setTimeout(() => process.exit(0), 50);` : `setInterval(() => {}, 1000);`}
+${mode === "exit0" ? `const ready = setInterval(() => { if (!existsSync(${JSON.stringify(pidFile)})) return; clearInterval(ready); writeFileSync(${JSON.stringify(doneFile)}, "1"); d.unref(); setTimeout(() => process.exit(0), 50); }, 10);` : `setInterval(() => {}, 1000);`}
 `, { mode: 0o755 });
   chmodSync(script, 0o755);
   const descPid = () => (existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : null);

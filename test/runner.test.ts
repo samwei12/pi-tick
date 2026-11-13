@@ -1,3 +1,4 @@
+import { scheduledPrompt } from "../extensions/tick/bin/agents/prompt.mjs";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { runJob, pruneTranscripts } from "../extensions/tick/bin/runner.mjs";
@@ -407,7 +408,7 @@ console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", 
     });
     assert.equal(result.exitCode, 0, result.error ?? "launcher failed");
     assert.equal(existsSync(sentinel), false, "prompt must never be interpreted by a shell");
-    const expected = ["--mode", "json", "-p", "--no-session", prompt];
+    const expected = ["--mode", "json", "-p", "--no-session", scheduledPrompt({ id: kind, prompt })];
     if (kind === "native") {
       assert.equal(readFileSync(result.transcriptPath, "utf8"), expected.join(" ") + "\n");
     } else {
