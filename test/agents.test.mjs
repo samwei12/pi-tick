@@ -59,3 +59,36 @@ test("unsupported agents and non-Pi slash commands are rejected", () => {
   assert.throws(() => agentAdapter("missing"), /unknown agent/);
   assert.throws(() => agentAdapter("opencode").plan({ prompt: "/tick list" }, {}), /require agent pi/);
 });
+
+test("command jobs run a shell line without a model and record exit status", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tick-command-"));
+  process.env.PI_TICK_DATA_DIR = dir;
+  const quiet = { write() {} };
+  const script = join(dir, "watch.sh");
+  writeFileSync(script, `#!/bin/sh\necho "checking $1"\necho '{"ok":true,"new":0}'\n`, { mode: 0o755 });
+  const job = await createTick({ jobId: "cmd", prompt: `${script} catalog`, cwd: dir, agent: "command",
+    scheduleKind: "interval", scheduleOpts: { minutes: "10" } }, { stdout: quiet });
+  assert.equal(job.agent, "command");
+  const adapter = agentAdapter("command");
+  const exe = adapter.resolve(job);
+  const options = { agentPath: exe, piPath: exe, transcriptsDir: join(dir, "runs"), logsDir: join(dir, "logs"), stderr: quiet };
+  mkdirSync(options.logsDir, { recursive: true });
+  const ok = await runJob(job, "manual", options);
+  assert.equal(ok.exitCode, 0);
+  assert.equal(ok.reason, "exit_code");
+  assert.equal(ok.finalTextPreview, '{"ok":true,"new":0}');
+  assert.match(readFileSync(ok.transcriptPath, "utf8"), /checking catalog/);
+
+  writeFileSync(script, `#!/bin/sh\necho '{"ok":false,"error":"catalog fetch failed"}'\nexit 2\n`, { mode: 0o755 });
+  const failed = await runJob(job, "manual", options);
+  assert.equal(failed.exitCode, 2);
+  assert.equal(failed.error, '{"ok":false,"error":"catalog fetch failed"}');
+  const runs = readFileSync(join(dir, "runs.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual(runs.map((r) => [r.agent, r.model, r.exitCode]), [["command", null, 0], ["command", null, 2]]);
+});
+
+test("command jobs reject a model", async () => {
+  process.env.PI_TICK_DATA_DIR = mkdtempSync(join(tmpdir(), "tick-command-model-"));
+  await assert.rejects(createTick({ jobId: "cmd2", prompt: "/bin/true", cwd: tmpdir(), agent: "command",
+    model: "x", scheduleKind: "daily", scheduleOpts: { time: "09:00" } }, { stdout: { write() {} } }), /take no --model/);
+});

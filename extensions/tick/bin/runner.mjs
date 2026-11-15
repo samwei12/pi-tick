@@ -300,7 +300,8 @@ function buildRunRecord({
   } else {
     reason = "exit_code";
     const sig = extractStderrSignature(stderrBuf);
-    const fallback = stderrBuf.trim().split("\n").pop() || "";
+    // Command jobs often report failures on stdout; fall back to the final line.
+    const fallback = stderrBuf.trim().split("\n").pop() || finalText || "";
     error = (sig || fallback).slice(0, 200) || null;
   }
 

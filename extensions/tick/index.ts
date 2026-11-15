@@ -428,7 +428,7 @@ export default function (pi: ExtensionAPI): void {
         at: Type.Optional(Type.String({ description: "once: absolute ISO-8601 timestamp, minute precision, and in the future" })),
       }),
       enabled: Type.Optional(Type.Boolean({ description: "If true, register the schedule with the active backend in the same call" })),
-      agent: Type.Optional(StringEnum(["pi", "opencode"])),
+      agent: Type.Optional(StringEnum(["pi", "opencode", "command"])),
       onComplete: Type.Optional(Type.String({ description: "Executable receiving the run JSON on stdin" })),
       model: Type.Optional(Type.String({ description: "Optional model id (passed to pi as --model)" })),
       timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 2147483647, description: "Wall-clock timeout in ms; SIGTERM then SIGKILL after killGraceMs. 0 = disabled. Default 30m." })),

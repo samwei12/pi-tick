@@ -54,7 +54,8 @@ export async function createTick(params, { stdout = process.stdout, stderr = pro
   const enabled = params.enabled === true;
   const model = params.model ? String(params.model) : null;
   const agent = agentAdapter(params.agent).id;
-  if (agent !== "pi" && prompt.trimStart().startsWith("/")) fail("slash commands require agent pi", 2);
+  if (agent === "opencode" && prompt.trimStart().startsWith("/")) fail("slash commands require agent pi", 2);
+  if (agent === "command" && model) fail("command jobs run a shell command and take no --model", 2);
   const onComplete = params.onComplete || null;
   if (onComplete && typeof onComplete !== "string") fail("onComplete must be an executable path", 2);
 

@@ -31,7 +31,17 @@ pi-tick run sample --manual
 pi-tick enable sample
 ```
 
-`--agent` is `pi` (default) or `opencode`. Model identifiers are passed unchanged;
+`--agent` is `pi` (default), `opencode` or `command`. A `command` job runs its
+`--prompt` as a `/bin/sh` command line without any model, so plain scripts share
+the same schedule, run log, transcripts and failure records as agent jobs; the exit
+code decides success and the last stdout line becomes the run summary:
+
+```sh
+pi-tick add deal-watch --agent command --prompt "/usr/bin/python3 /abs/watch.py" \
+  --cwd "$PWD" --kind interval --minutes 10
+```
+
+For Pi and OpenCode, model identifiers are passed unchanged;
 use the identifier exposed by that agent. Slash commands remain Pi-only. Each
 adapter owns its command arguments, executable lookup and event parser under
 `extensions/tick/bin/agents/`; the runner owns process lifetime and storage.
