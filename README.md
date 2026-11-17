@@ -52,6 +52,10 @@ suffix, which is passed as `model_reasoning_effort`; when the id has more than
 `provider/model` (for example `gateway/provider/model`), the leading gateway
 segment is dropped because codex resolves the remaining id itself.
 
+Codex and OpenCode transcripts are readable with `pi-tick show`, including
+completed tool calls and final text; `--tail` selects the latest text blocks.
+Raw JSONL remains unchanged for audits and callbacks.
+
 `--on-complete /absolute/path/to/executable` optionally invokes one executable
 in the task's working directory, with the saved run record as JSON on stdin.
 It runs after the task is recorded, for success and failure. It has a 30-second
