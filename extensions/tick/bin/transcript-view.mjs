@@ -126,6 +126,42 @@ export function prettyPrintTranscript(events, opts = {}) {
   for (const evt of events) {
     if (!evt || typeof evt.type !== "string") continue;
 
+    // Codex exec reports each finished item separately; there is no
+    // message_end stream to walk. OpenCode reports text and completed tool
+    // calls the same way, so both are rendered here.
+    if (evt.type === "item.completed" && evt.item) {
+      const item = evt.item;
+      if (item.type === "reasoning" && typeof item.text === "string") {
+        renderAssistantContent([{ type: "thinking", thinking: item.text }], out, assistantOpts);
+      } else if (item.type === "agent_message" && typeof item.text === "string") {
+        renderAssistantContent([{ type: "text", text: item.text }], out, assistantOpts);
+      } else if (item.type === "command_execution") {
+        renderAssistantContent([{ type: "tool_use", name: "shell", input: { command: item.command } }], out, assistantOpts);
+        const result = truncateForChat(String(item.aggregated_output ?? ""), maxToolRes, maxToolResLines);
+        if (result) out.push(...result.split("\n").map(line => `    ${line}`));
+      } else if (item.type === "mcp_tool_call") {
+        const name = [item.server, item.tool].filter(Boolean).join(".") || "mcp";
+        renderAssistantContent([{ type: "tool_use", name, input: item.arguments }], out, assistantOpts);
+        const raw = item.error ?? item.result ?? "";
+        const result = truncateForChat(typeof raw === "string" ? raw : JSON.stringify(raw), maxToolRes, maxToolResLines);
+        if (result) out.push(...result.split("\n").map(line => `    ${line}`));
+      } else if (item.type === "file_change") {
+        const paths = (item.changes || []).map((c) => c.path).filter(Boolean).join(", ");
+        renderAssistantContent([{ type: "tool_use", name: "file_change", input: { paths } }], out, assistantOpts);
+      }
+      continue;
+    }
+    if (evt.type === "text" && typeof evt.part?.text === "string") {
+      renderAssistantContent([{ type: "text", text: evt.part.text }], out, assistantOpts);
+      continue;
+    }
+    if (evt.type === "tool_use" && evt.part?.state?.status === "completed") {
+      renderAssistantContent([{ type: "tool_use", name: evt.part.tool, input: evt.part.state.input }], out, assistantOpts);
+      const result = truncateForChat(String(evt.part.state.output ?? ""), maxToolRes, maxToolResLines);
+      if (result) out.push(...result.split("\n").map(line => `    ${line}`));
+      continue;
+    }
+
     if ((evt.type === "message_start" || evt.type === "message_update")
       && evt.message && evt.message.role === "assistant") {
       // Snapshot replaces whatever was open: message_update carries the

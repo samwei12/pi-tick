@@ -85,15 +85,18 @@ export function cmdShow(argv, { stdout = process.stdout, stderr = process.stderr
   if (!noMeta) stdout.write(formatRunHeader(file, rec, id) + "\n");
   if (truncNote) stdout.write(truncNote + "\n");
 
-  // Optionally trim to the last N assistant turns. A "turn" is one
-  // assistant `message_end`. We keep everything from the Nth-to-last turn
+  // Optionally trim to the last N assistant turns. A turn closes on pi's
+  // assistant `message_end`, an OpenCode `text` block, or a codex
+  // `agent_message` item. We keep everything from the Nth-to-last turn
   // onwards (including the user prompt that precedes it, if any).
   let viewEvents = events;
   if (tailTurns !== null && tailTurns > 0) {
     const turnIdxs = [];
     for (let i = 0; i < events.length; i++) {
       const e = events[i];
-      if (e && e.type === "message_end" && e.message && e.message.role === "assistant") {
+      if (e && ((e.type === "message_end" && e.message?.role === "assistant")
+        || e.type === "text"
+        || (e.type === "item.completed" && e.item?.type === "agent_message"))) {
         turnIdxs.push(i);
       }
     }

@@ -41,7 +41,7 @@
     "test:macos": "node --experimental-strip-types --test --test-reporter=spec test/launchd-integration.test.ts",
     "sync": "node scripts/sync-cli.mjs",
     "install:cli": "node scripts/install.mjs",
-    "test:agents": "node --test test/agents.test.mjs"
+    "test:agents": "node --test test/agents.test.mjs test/transcript-view.test.mjs"
   },
   "dependencies": {},
   "peerDependencies": {
