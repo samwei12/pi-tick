@@ -46,6 +46,12 @@ use the identifier exposed by that agent. Slash commands remain Pi-only. Each
 adapter owns its command arguments, executable lookup and event parser under
 `extensions/tick/bin/agents/`; the runner owns process lifetime and storage.
 
+`--agent codex` runs `codex exec --json` and records the same transcript, usage
+and failure fields as the other agents. A model id may carry an `#effort`
+suffix, which is passed as `model_reasoning_effort`; when the id has more than
+`provider/model` (for example `gateway/provider/model`), the leading gateway
+segment is dropped because codex resolves the remaining id itself.
+
 `--on-complete /absolute/path/to/executable` optionally invokes one executable
 in the task's working directory, with the saved run record as JSON on stdin.
 It runs after the task is recorded, for success and failure. It has a 30-second
